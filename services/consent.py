@@ -1,5 +1,9 @@
 from datetime import datetime, timedelta, timezone
+
+from sqlalchemy import update
+
 from models.tables import ConsentRequest
+from services.audit import add_audit_log
 
 CONSENT_EXPIRY_MINUTES = 5
 CONSENT_REDEEM_MINUTES = 5  # an approval must be redeemed for a token within this long
@@ -9,16 +13,26 @@ def expire_stale_consents(db) -> None:
     """Flip any pending consent requests older than 5 minutes to 'expired'.
 
     Called at poll time (GET /consent/status/{id}) so no background thread
-    is needed on the free Render tier.
+    is needed on the free Render tier. Each request that this call expires is
+    written to the audit log; RETURNING means a request is only logged by the
+    one caller whose UPDATE actually flipped it.
     """
-    cutoff = datetime.now(timezone.utc) - timedelta(minutes=CONSENT_EXPIRY_MINUTES)
-    db.query(ConsentRequest).filter(
-        ConsentRequest.status == "pending",
-        ConsentRequest.created_at < cutoff,
-    ).update(
-        {"status": "expired", "resolved_at": datetime.now(timezone.utc)},
-        synchronize_session=False,
-    )
+    now = datetime.now(timezone.utc)
+    expired = db.execute(
+        update(ConsentRequest)
+        .where(
+            ConsentRequest.status == "pending",
+            ConsentRequest.created_at < now - timedelta(minutes=CONSENT_EXPIRY_MINUTES),
+        )
+        .values(status="expired", resolved_at=now)
+        .returning(ConsentRequest.agent_id, ConsentRequest.user_id)
+        .execution_options(synchronize_session=False)
+    ).all()
+    for agent_id, user_id in expired:
+        add_audit_log(
+            db, agent_id=agent_id, user_id=user_id, endpoint="/consent/request", method="POST",
+            action="consent_expired", consent_required=True, consent_given=False,
+        )
     db.commit()
 
 

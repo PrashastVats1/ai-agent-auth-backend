@@ -3,14 +3,17 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models.schemas import AgentTokenRequest, AgentTokenResponse
-from models.tables import Agent, User
+from models.tables import Agent, Policy, User
+from services.audit import add_audit_log
 from services.consent import redeem_consent
-from services.monocloud import validate_monocloud_jwt
+from services.monocloud import client_id_from_monocloud_claims, validate_monocloud_jwt
+from services.policy import REJECTION_MESSAGES, check_schedule
 from services.delegation import issue_agent_jwt, EXPIRY_MINUTES
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 DEFAULT_SCOPES = ["read"]
+TOKEN_ENDPOINT = "/auth/agent-token"
 
 
 @router.post("/agent-token", response_model=AgentTokenResponse)
@@ -42,8 +45,7 @@ def get_agent_token(body: AgentTokenRequest, db: Session = Depends(get_db)):
     except ValueError as e:
         raise HTTPException(status_code=401, detail=f"Agent token rejected: {e}")
 
-    token_client_id = agent_claims.get("client_id") or agent_claims.get("azp")
-    if token_client_id != body.monocloud_client_id:
+    if client_id_from_monocloud_claims(agent_claims) != body.monocloud_client_id:
         raise HTTPException(status_code=401, detail="Agent token was not issued to this client ID")
 
     # Step 3: look up the user in our database (they must have synced first)
@@ -60,15 +62,33 @@ def get_agent_token(body: AgentTokenRequest, db: Session = Depends(get_db)):
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    # Step 5: optionally redeem an approved consent for a destructive scope
+    def log(action: str, consent_required=False, consent_given=None):
+        add_audit_log(
+            db, agent_id=agent.id, user_id=user.id, endpoint=TOKEN_ENDPOINT, method="POST",
+            action=action, consent_required=consent_required, consent_given=consent_given,
+        )
+
+    # Step 5: enforce the parts of the agent's policy that don't depend on which
+    # endpoint it will call: it needs a policy, and the current time/day must be allowed.
+    # (Endpoint and method rules are checked on each request, once those are known.)
+    policy = db.query(Policy).filter(Policy.agent_id == agent.id).first()
+    rejection = check_schedule(policy)
+    if rejection:
+        log(rejection)
+        db.commit()
+        raise HTTPException(status_code=403, detail=REJECTION_MESSAGES[rejection])
+
+    # Step 6: optionally redeem an approved consent for a destructive scope
     scopes = list(DEFAULT_SCOPES)
     if body.consent_id is not None:
         consented_scope = redeem_consent(db, body.consent_id, user.id, agent.id)
         if consented_scope is None:
+            log("rejected_consent", consent_required=True, consent_given=False)
+            db.commit()
             raise HTTPException(status_code=403, detail="Consent is not approved, was already used, or has expired")
         scopes.append(consented_scope)
 
-    # Step 6: issue the delegation JWT, then commit so the redemption only sticks if we got this far
+    # Step 7: issue the delegation JWT, then commit so the redemption only sticks if we got this far
     token = issue_agent_jwt(
         user_id=str(user.id),
         user_email=user.email,
@@ -76,6 +96,10 @@ def get_agent_token(body: AgentTokenRequest, db: Session = Depends(get_db)):
         agent_name=agent.name,
         scopes=scopes,
     )
+    if body.consent_id is not None:
+        log("token_issued_with_consent", consent_required=True, consent_given=True)
+    else:
+        log("token_issued")
     db.commit()
 
     return AgentTokenResponse(

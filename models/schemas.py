@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, field_validator, model_validator
 from typing import Optional
 from datetime import datetime, time
 import uuid
@@ -51,12 +51,54 @@ class AgentOut(BaseModel):
 
 # --- Policies ---
 
+HTTP_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
+WEEKDAYS = {"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"}
+
+
 class PolicyCreate(BaseModel):
-    allowed_endpoints: list[str] = []
+    allowed_endpoints: list[str] = []  # exact paths, or a prefix ending in "*" (e.g. "/api/orders/*")
     allowed_methods: list[str] = []
-    time_window_start: Optional[time] = None
+    time_window_start: Optional[time] = None  # IST; start > end means the window crosses midnight
     time_window_end: Optional[time] = None
     allowed_days: list[str] = []
+
+    @field_validator("allowed_endpoints")
+    @classmethod
+    def _endpoints(cls, values: list[str]) -> list[str]:
+        cleaned = [v.strip() for v in values if v.strip()]
+        for v in cleaned:
+            if not v.startswith("/"):
+                raise ValueError(f"endpoint '{v}' must start with '/'")
+            if "*" in v[:-1]:
+                raise ValueError(f"endpoint '{v}': '*' is only allowed at the end")
+        return cleaned
+
+    @field_validator("allowed_methods")
+    @classmethod
+    def _methods(cls, values: list[str]) -> list[str]:
+        cleaned = [v.strip().upper() for v in values if v.strip()]
+        bad = [v for v in cleaned if v not in HTTP_METHODS]
+        if bad:
+            raise ValueError(f"unknown HTTP method(s): {', '.join(bad)}")
+        return cleaned
+
+    @field_validator("allowed_days")
+    @classmethod
+    def _days(cls, values: list[str]) -> list[str]:
+        cleaned = [v.strip().lower() for v in values if v.strip()]
+        bad = [v for v in cleaned if v not in WEEKDAYS]
+        if bad:
+            raise ValueError(f"unknown day(s): {', '.join(bad)} (use monday..sunday)")
+        return cleaned
+
+    @model_validator(mode="after")
+    def _time_window(self):
+        start, end = self.time_window_start, self.time_window_end
+        if (start is None) != (end is None):
+            raise ValueError("set both time_window_start and time_window_end, or neither")
+        if start is not None and start == end:
+            raise ValueError("time window start and end must differ")
+        return self
 
 class PolicyOut(BaseModel):
     id: uuid.UUID

@@ -1,25 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.security import HTTPBearer
 from sqlalchemy.orm import Session
 
 from database import get_db
+from middleware.user_auth import get_current_user
 from models.schemas import PolicyCreate, PolicyOut
 from models.tables import Agent, Policy, User
-from services.monocloud import validate_monocloud_jwt
 
 router = APIRouter(prefix="/api/policies", tags=["policies"])
-bearer = HTTPBearer()
-
-
-def _get_current_user(token=Depends(bearer), db: Session = Depends(get_db)) -> User:
-    try:
-        claims = validate_monocloud_jwt(token.credentials)
-    except ValueError as e:
-        raise HTTPException(status_code=401, detail=str(e))
-    user = db.query(User).filter(User.monocloud_user_id == claims["sub"]).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    return user
 
 
 def _owned_agent(agent_id: str, user: User, db: Session) -> Agent:
@@ -32,7 +19,7 @@ def _owned_agent(agent_id: str, user: User, db: Session) -> Agent:
 @router.get("/{agent_id}", response_model=PolicyOut)
 def get_policy(
     agent_id: str,
-    user: User = Depends(_get_current_user),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     agent = _owned_agent(agent_id, user, db)
@@ -46,7 +33,7 @@ def get_policy(
 def upsert_policy(
     agent_id: str,
     body: PolicyCreate,
-    user: User = Depends(_get_current_user),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     agent = _owned_agent(agent_id, user, db)
@@ -75,7 +62,7 @@ def upsert_policy(
 @router.delete("/{agent_id}", status_code=204)
 def delete_policy(
     agent_id: str,
-    user: User = Depends(_get_current_user),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     agent = _owned_agent(agent_id, user, db)

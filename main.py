@@ -1,3 +1,5 @@
+import os
+
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -8,12 +10,18 @@ from routers import auth, users, agents, policies, consent, audit, protected
 
 app = FastAPI(title="AI Agent Auth", version="1.0.0")
 
+
+
+def cors_origins() -> list[str]:
+    """localhost:5173 (Vite) is always allowed for local dev. Add deployed dashboard
+    URLs, comma-separated, in CORS_ALLOWED_ORIGINS."""
+    extra = [o.strip().rstrip("/") for o in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",") if o.strip()]
+    return ["http://localhost:5173", *extra]
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "https://ai-agent-auth-frontend-ch6m-one.vercel.app",
-    ],
+    allow_origins=cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
