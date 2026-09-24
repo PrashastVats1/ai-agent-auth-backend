@@ -1,38 +1,24 @@
 from fastapi import APIRouter, Depends, Query
-from fastapi.security import HTTPBearer
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from database import get_db
+from middleware.user_auth import get_current_user
 from models.schemas import AuditLogOut
-from models.tables import AuditLog, User
-from services.monocloud import validate_monocloud_jwt
-from fastapi import HTTPException
+from models.tables import Agent, AuditLog, User
 
 router = APIRouter(prefix="/api/audit", tags=["audit"])
-bearer = HTTPBearer()
-
-
-def _get_current_user(token=Depends(bearer), db: Session = Depends(get_db)) -> User:
-    try:
-        claims = validate_monocloud_jwt(token.credentials)
-    except ValueError as e:
-        raise HTTPException(status_code=401, detail=str(e))
-    user = db.query(User).filter(User.monocloud_user_id == claims["sub"]).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    return user
 
 
 @router.get("", response_model=list[AuditLogOut])
 def get_audit_logs(
     limit: int = Query(50, le=200),
     offset: int = Query(0, ge=0),
-    user: User = Depends(_get_current_user),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Returns audit log entries for agents owned by the current user, newest first."""
-    from models.tables import Agent
-    owned_agent_ids = [a.id for a in db.query(Agent).filter(Agent.owner_id == user.id).all()]
+    owned_agent_ids = select(Agent.id).where(Agent.owner_id == user.id)
     return (
         db.query(AuditLog)
         .filter(AuditLog.agent_id.in_(owned_agent_ids))

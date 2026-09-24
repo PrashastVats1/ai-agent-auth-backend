@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, time
+from datetime import datetime, timezone
 from sqlalchemy import (
     Column, String, Text, Boolean, DateTime, Time, ForeignKey, ARRAY
 )
@@ -8,13 +8,18 @@ from sqlalchemy.orm import relationship
 from database import Base
 
 
+def _utcnow() -> datetime:
+    # Timezone-aware: a naive datetime is read in the database session's zone, which is only UTC by luck.
+    return datetime.now(timezone.utc)
+
+
 class User(Base):
     __tablename__ = "users"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email = Column(Text, nullable=False, unique=True)
     monocloud_user_id = Column(Text, nullable=False, unique=True)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
 
     agents = relationship("Agent", back_populates="owner", cascade="all, delete")
     consent_requests = relationship("ConsentRequest", back_populates="user")
@@ -27,7 +32,7 @@ class Agent(Base):
     name = Column(Text, nullable=False)
     monocloud_client_id = Column(Text, nullable=False, unique=True)
     owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
 
     owner = relationship("User", back_populates="agents")
     policy = relationship("Policy", back_populates="agent", uselist=False, cascade="all, delete")
@@ -56,7 +61,7 @@ class ConsentRequest(Base):
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     scope = Column(Text, nullable=False)
     status = Column(Text, nullable=False, default="pending")
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
     resolved_at = Column(DateTime(timezone=True), nullable=True)
     consumed_at = Column(DateTime(timezone=True), nullable=True)  # set once the approval is redeemed for a token
 
@@ -73,6 +78,6 @@ class AuditLog(Base):
     endpoint = Column(Text, nullable=False)
     method = Column(Text, nullable=False)
     action = Column(Text, nullable=False)
-    timestamp = Column(DateTime(timezone=True), default=datetime.utcnow)
+    timestamp = Column(DateTime(timezone=True), default=_utcnow)
     consent_required = Column(Boolean, nullable=False, default=False)
     consent_given = Column(Boolean, nullable=True)

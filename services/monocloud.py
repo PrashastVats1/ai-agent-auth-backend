@@ -37,3 +37,9 @@ def validate_monocloud_jwt(token: str) -> dict:
         )
     except JWTError as e:
         raise ValueError(f"Invalid MonoCloud token: {e}")
+
+
+def client_id_from_monocloud_claims(claims: dict) -> str | None:
+    """The OAuth client a MonoCloud token was issued to (for an agent's M2M token,
+    that is the agent's monocloud_client_id)."""
+    return claims.get("client_id") or claims.get("azp")

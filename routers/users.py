@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -24,13 +25,22 @@ def sync_user(token=Depends(bearer), db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail=str(e))
 
     monocloud_user_id = claims["sub"]
-    email = claims.get("email", "")
 
     user = db.query(User).filter(User.monocloud_user_id == monocloud_user_id).first()
     if not user:
+        email = claims.get("email")
+        if not email:
+            raise HTTPException(
+                status_code=400,
+                detail="Token has no email claim — the app must request the 'email' scope",
+            )
         user = User(monocloud_user_id=monocloud_user_id, email=email)
         db.add(user)
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(status_code=409, detail="A user with this email already exists")
         db.refresh(user)
 
     return user

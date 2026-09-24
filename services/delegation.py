@@ -19,7 +19,7 @@ def issue_agent_jwt(
     This token is NOT issued by MonoCloud and must NOT be validated against
     MonoCloud's JWKS. Use validate_agent_jwt() to verify it.
     """
-    now = datetime.datetime.utcnow()
+    now = datetime.datetime.now(datetime.timezone.utc)
     payload = {
         "user_id": user_id,
         "user_email": user_email,

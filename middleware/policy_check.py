@@ -1,19 +1,18 @@
-from datetime import datetime, timezone, timedelta
-from zoneinfo import ZoneInfo
-
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPBearer
 
 from database import get_db
-from models.tables import Policy, AuditLog
+from models.tables import Policy
+from services.audit import add_audit_log
 from services.delegation import validate_agent_jwt
+from services.policy import REJECTION_MESSAGES, check_request
 
 bearer = HTTPBearer()
-IST = ZoneInfo("Asia/Kolkata")
 
 
 def _log(db, claims: dict, endpoint: str, method: str, action: str, consent_required=False, consent_given=None):
-    db.add(AuditLog(
+    add_audit_log(
+        db,
         agent_id=claims.get("agent_id"),
         user_id=claims.get("user_id"),
         endpoint=endpoint,
@@ -21,7 +20,7 @@ def _log(db, claims: dict, endpoint: str, method: str, action: str, consent_requ
         action=action,
         consent_required=consent_required,
         consent_given=consent_given,
-    ))
+    )
     db.commit()
 
 
@@ -33,42 +32,17 @@ def _decode_agent_claims(token) -> dict:
 
 
 def _apply_policy(request: Request, claims: dict, db, consent_required=False, consent_given=None) -> None:
-    """Check the agent's policy row against this request. Logs every outcome and
-    raises 403 on a violation."""
-    agent_id = claims["agent_id"]
-    method = request.method
+    """Check the agent's policy against this request. Logs every outcome and
+    raises 403 on a violation. An agent with no policy is denied."""
     endpoint = request.url.path
+    method = request.method
 
-    def log(action: str):
-        _log(db, claims, endpoint, method, action, consent_required, consent_given)
+    policy = db.query(Policy).filter(Policy.agent_id == claims["agent_id"]).first()
+    rejection = check_request(policy, endpoint, method)
 
-    policy = db.query(Policy).filter(Policy.agent_id == agent_id).first()
-    if not policy:
-        # No policy configured — allow but log.
-        log("allowed_no_policy")
-        return
-
-    if policy.allowed_endpoints and endpoint not in policy.allowed_endpoints:
-        log("rejected_endpoint")
-        raise HTTPException(status_code=403, detail="Endpoint not permitted by agent policy")
-
-    if policy.allowed_methods and method not in policy.allowed_methods:
-        log("rejected_method")
-        raise HTTPException(status_code=403, detail="Method not permitted by agent policy")
-
-    if policy.time_window_start and policy.time_window_end:
-        now_ist = datetime.now(IST).time()
-        if not (policy.time_window_start <= now_ist <= policy.time_window_end):
-            log("rejected_time_window")
-            raise HTTPException(status_code=403, detail="Request outside allowed time window")
-
-    if policy.allowed_days:
-        day_name = datetime.now(IST).strftime("%A").lower()
-        if day_name not in [d.lower() for d in policy.allowed_days]:
-            log("rejected_day")
-            raise HTTPException(status_code=403, detail="Request on disallowed day")
-
-    log("allowed")
+    _log(db, claims, endpoint, method, rejection or "allowed", consent_required, consent_given)
+    if rejection:
+        raise HTTPException(status_code=403, detail=REJECTION_MESSAGES[rejection])
 
 
 def enforce_policy(request: Request, token=Depends(bearer), db=Depends(get_db)) -> dict:
