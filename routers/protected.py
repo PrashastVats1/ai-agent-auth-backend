@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends
-from middleware.policy_check import enforce_policy
+from middleware.policy_check import enforce_policy, require_scope
 
 router = APIRouter(prefix="/api/protected", tags=["protected"])
 
@@ -17,4 +17,16 @@ def list_orders(claims: dict = Depends(enforce_policy)):
         "agent_id": claims["agent_id"],
         "user_id": claims["user_id"],
         "scopes": claims["scopes"],
+    }
+
+
+@router.delete("/orders")
+def delete_orders(claims: dict = Depends(require_scope("delete:orders"))):
+    """Demo destructive endpoint. Needs a delegation JWT carrying the
+    delete:orders scope, which the agent only gets by redeeming a consent
+    request the user approved."""
+    return {
+        "message": f"Agent '{claims['agent_name']}' deleted orders on behalf of '{claims['user_email']}' (consent approved).",
+        "agent_id": claims["agent_id"],
+        "user_id": claims["user_id"],
     }

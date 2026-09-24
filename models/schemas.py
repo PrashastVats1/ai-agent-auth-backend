@@ -7,12 +7,15 @@ import uuid
 # --- Auth ---
 
 class AgentTokenRequest(BaseModel):
-    monocloud_user_jwt: str
+    monocloud_user_jwt: str   # the human's MonoCloud access token
+    monocloud_agent_jwt: str  # the agent's own MonoCloud M2M access token (client credentials)
     monocloud_client_id: str
+    consent_id: Optional[uuid.UUID] = None  # an approved consent to redeem for its destructive scope
 
 class AgentTokenResponse(BaseModel):
     agent_delegation_jwt: str
     expires_in: int  # seconds
+    scopes: list[str]
 
 
 # --- Users ---

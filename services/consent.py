@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 from models.tables import ConsentRequest
 
 CONSENT_EXPIRY_MINUTES = 5
+CONSENT_REDEEM_MINUTES = 5  # an approval must be redeemed for a token within this long
 
 
 def expire_stale_consents(db) -> None:
@@ -25,3 +26,24 @@ def is_destructive_scope(scope: str) -> bool:
     """Returns True if the requested scope requires user consent."""
     destructive_prefixes = ("delete:", "write:", "admin:")
     return any(scope.lower().startswith(p) for p in destructive_prefixes)
+
+
+def redeem_consent(db, consent_id, user_id, agent_id) -> str | None:
+    """Atomically consume an approved consent and return the scope it grants.
+
+    Returns None if the consent doesn't exist, belongs to a different user or
+    agent, isn't approved, was already redeemed, or was approved too long ago.
+    The caller commits, so a failure after this call rolls the redemption back.
+    """
+    now = datetime.now(timezone.utc)
+    redeemed = db.query(ConsentRequest).filter(
+        ConsentRequest.id == consent_id,
+        ConsentRequest.user_id == user_id,
+        ConsentRequest.agent_id == agent_id,
+        ConsentRequest.status == "approved",
+        ConsentRequest.consumed_at.is_(None),
+        ConsentRequest.resolved_at >= now - timedelta(minutes=CONSENT_REDEEM_MINUTES),
+    ).update({"consumed_at": now}, synchronize_session=False)
+    if redeemed != 1:
+        return None
+    return db.query(ConsentRequest.scope).filter(ConsentRequest.id == consent_id).scalar()

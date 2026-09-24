@@ -58,6 +58,7 @@ class ConsentRequest(Base):
     status = Column(Text, nullable=False, default="pending")
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     resolved_at = Column(DateTime(timezone=True), nullable=True)
+    consumed_at = Column(DateTime(timezone=True), nullable=True)  # set once the approval is redeemed for a token
 
     agent = relationship("Agent", back_populates="consent_requests")
     user = relationship("User", back_populates="consent_requests")
