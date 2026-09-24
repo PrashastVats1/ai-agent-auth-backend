@@ -32,7 +32,8 @@ CREATE TABLE IF NOT EXISTS consent_requests (
     scope TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'denied', 'expired')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    resolved_at TIMESTAMPTZ
+    resolved_at TIMESTAMPTZ,
+    consumed_at TIMESTAMPTZ
 );
 
 CREATE TABLE IF NOT EXISTS audit_logs (
@@ -50,3 +51,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 CREATE INDEX IF NOT EXISTS idx_consent_requests_status ON consent_requests(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_agent_id ON audit_logs(agent_id, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs(user_id, timestamp DESC);
+
+-- Migration for databases created before consent redemption existed.
+-- Safe to run repeatedly. Run this BEFORE deploying the matching backend code.
+ALTER TABLE consent_requests ADD COLUMN IF NOT EXISTS consumed_at TIMESTAMPTZ;
